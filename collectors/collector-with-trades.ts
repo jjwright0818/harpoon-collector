@@ -87,10 +87,11 @@ interface Trade {
 
 /**
  * Discover and refresh markets from Polymarket
- * Fetches all markets with >= $100k volume (or other criteria)
+ * Fetches ONLY political markets with >= $100k volume
+ * Excludes: sports, entertainment, media, crypto, pop culture
  */
 async function discoverMarkets() {
-  console.log(`\n🔍 [${new Date().toISOString()}] Discovering markets...`);
+  console.log(`\n🔍 [${new Date().toISOString()}] Discovering political markets...`);
   try {
     // Fetch all markets from Polymarket
     const response = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=1000', {
@@ -108,12 +109,58 @@ async function discoverMarkets() {
     const marketsData = await response.json();
     const markets = Array.isArray(marketsData) ? marketsData : (marketsData.data || []);
 
-    // Filter for markets meeting our criteria
+    // Political keywords to look for
+    const politicalKeywords = [
+      'election', 'president', 'senate', 'congress', 'governor', 'democrat', 'republican',
+      'trump', 'biden', 'harris', 'political', 'politics', 'vote', 'campaign',
+      'fed', 'federal reserve', 'recession', 'inflation', 'gdp', 'unemployment',
+      'policy', 'legislation', 'bill', 'law', 'supreme court', 'scotus',
+      'nato', 'china', 'russia', 'ukraine', 'taiwan', 'geopolitics', 'diplomacy',
+      'cabinet', 'administration', 'government', 'impeach', 'resign'
+    ];
+
+    // Exclusion keywords (sports, entertainment, media, crypto, pop culture)
+    const exclusionKeywords = [
+      'nfl', 'nba', 'mlb', 'nhl', 'soccer', 'football', 'basketball', 'baseball',
+      'sport', 'team', 'game', 'playoff', 'championship', 'super bowl', 'world series',
+      'movie', 'film', 'actor', 'actress', 'oscar', 'emmy', 'grammy', 'award',
+      'music', 'album', 'artist', 'celebrity', 'kardashian', 'taylor swift',
+      'bitcoin', 'ethereum', 'crypto', 'nft', 'dogecoin', 'solana',
+      'stock', 'tesla', 'apple', 'google', 'amazon', 'meta',
+      'entertainment', 'pop culture', 'tiktok', 'youtube', 'influencer'
+    ];
+
+    // Filter for political markets
     const qualifyingMarkets = markets
       .filter((m: any) => {
         const volume = parseFloat(m.volume24hr || m.volume_24h || 0);
-        // Only track markets with >= $100k volume
-        return volume >= MIN_VOLUME_THRESHOLD;
+        if (volume < MIN_VOLUME_THRESHOLD) return false;
+
+        // Get searchable text (question, description, tags)
+        const searchText = [
+          m.question || '',
+          m.description || '',
+          m.groupItemTitle || '',
+          m.marketSlug || '',
+          ...(m.tags || [])
+        ].join(' ').toLowerCase();
+
+        // Check for political tag or keywords
+        const hasPoliticalTag = (m.tags || []).some((tag: string) => 
+          tag.toLowerCase().includes('politic')
+        );
+        
+        const hasPoliticalKeyword = politicalKeywords.some(keyword => 
+          searchText.includes(keyword.toLowerCase())
+        );
+
+        // Check for exclusion keywords
+        const hasExclusionKeyword = exclusionKeywords.some(keyword => 
+          searchText.includes(keyword.toLowerCase())
+        );
+
+        // Must have political content AND not be excluded
+        return (hasPoliticalTag || hasPoliticalKeyword) && !hasExclusionKeyword;
       })
       .map((m: any) => ({
         market_id: m.id || m.market_id || m.conditionId,
@@ -126,7 +173,7 @@ async function discoverMarkets() {
       }));
 
     trackedMarkets = qualifyingMarkets;
-    console.log(`✅ Discovered ${qualifyingMarkets.length} markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume`);
+    console.log(`✅ Discovered ${qualifyingMarkets.length} POLITICAL markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume`);
 
     return qualifyingMarkets;
   } catch (error) {
