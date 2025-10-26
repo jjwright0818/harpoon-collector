@@ -117,7 +117,7 @@ async function discoverMarkets() {
       // Entertainment
       'oscar', 'emmy', 'grammy', 'movie', 'film', 'actor',
       // Crypto (broader matching - any crypto price prediction)
-      'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol',
+      'bitcoin', 'btc', 'ethereum', 'eth', 'solana', // removed 'sol' - too generic, matches "resolve"
       'crypto', 'cryptocurrency', 'dogecoin', 'doge', 'xrp', 'ripple',
       // Weather
       'weather', 'temperature', 'celsius', 'fahrenheit',
@@ -170,9 +170,20 @@ async function discoverMarkets() {
       const markets = event.markets || [];
       
       for (const market of markets) {
-        // Check volume threshold
-        const volumeNum = parseFloat(market.volumeNum || market.volume || 0);
-        if (volumeNum < MIN_VOLUME_THRESHOLD) continue;
+        // Check volume threshold - try multiple possible volume fields
+        const volumeNum = parseFloat(
+          market.volumeNum || 
+          market.volume || 
+          market.volume24hr ||
+          market.volumeUSD ||
+          event.volume ||
+          event.volumeNum ||
+          0
+        );
+        
+        if (volumeNum < MIN_VOLUME_THRESHOLD) {
+          continue;
+        }
 
         // Get searchable text
         const searchText = [
@@ -187,7 +198,9 @@ async function discoverMarkets() {
           searchText.includes(keyword.toLowerCase())
         );
 
-        if (hasExclusionKeyword) continue;
+        if (hasExclusionKeyword) {
+          continue;
+        }
 
         // Extract market data (condition_id will be fetched and stored in database during snapshot)
         qualifyingMarkets.push({
