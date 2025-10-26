@@ -30,7 +30,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Configuration
 const COLLECTION_INTERVAL_MS = 60 * 1000; // 1 minute
-const TRADE_COLLECTION_INTERVAL_MS = 30 * 1000; // 30 seconds (trades happen faster)
+const TRADE_COLLECTION_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes (trades don't change that fast, prevents rate limiting)
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const TRADE_HISTORY_HOURS = 48; // Keep trades for 48 hours
 const SNAPSHOT_HISTORY_DAYS = 7; // Keep snapshots for 7 days
@@ -42,7 +42,7 @@ const MARKET_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // Refresh market list every 
 // Thresholds for trades
 const LARGE_TRADE_THRESHOLD = 1000;  // $1k (for flagging)
 const WHALE_TRADE_THRESHOLD = 10000; // $10k (for flagging)
-const MIN_TRADE_SIZE_TO_STORE = 1000; // Store trades >= $1k (lowered for better data collection)
+const MIN_TRADE_SIZE_TO_STORE = 10000; // Store trades >= $10k (whale trades only)
 
 // In-memory cache of markets to track
 let trackedMarkets: Array<{ market_id: string; event_id: string; volume_24h: number }> = [];
@@ -352,8 +352,8 @@ async function fetchAndStoreTrades() {
     let failedFetches = 0;
 
     // Fetch trades for each market (in batches to avoid rate limits)
-    for (let i = 0; i < trackedMarkets.length; i += 10) {
-      const batch = trackedMarkets.slice(i, i + 10);
+    for (let i = 0; i < trackedMarkets.length; i += 5) {
+      const batch = trackedMarkets.slice(i, i + 5);
       
       await Promise.all(batch.map(async (market) => {
         try {
@@ -444,8 +444,8 @@ async function fetchAndStoreTrades() {
         }
       }));
 
-      // Small delay between batches to respect rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Delay between batches to respect API rate limits
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     // Summary
