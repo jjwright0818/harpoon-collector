@@ -1,5 +1,13 @@
--- Step 1: Add trader information columns to trades table
+-- Step 1: Add trader information, shares, and usd columns to trades table
 -- Run this BEFORE deploying new collector code
+
+-- Add shares column (number of outcome tokens purchased)
+ALTER TABLE trades 
+ADD COLUMN IF NOT EXISTS shares DECIMAL(20,6);
+
+-- Add usd column (USD amount spent - replaces size)
+ALTER TABLE trades 
+ADD COLUMN IF NOT EXISTS usd DECIMAL(15,2);
 
 -- Add trader columns if they don't exist
 ALTER TABLE trades 

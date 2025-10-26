@@ -3,9 +3,10 @@
 ## 🐛 Issues Fixed
 
 ### **1. Trade Size Calculation (CRITICAL)**
-- **Before:** Stored `size` as USD → Actually was SHARES
-- **After:** Calculate `size = shares × price` → Real USD amount
-- **Impact:** All trade sizes were inflated 100-1000x
+- **Before:** Stored `size` as USD → Actually was SHARES (wrong!)
+- **After:** Store BOTH `shares` (position size) and `usd` (USD amount spent)
+- **Calculation:** `usd = shares × price`
+- **Impact:** All existing trade sizes were inflated 100-1000x
 
 ### **2. User Attribution**
 - **Before:** maker_address/taker_address (confusing, not accurate for Polymarket)
@@ -16,6 +17,12 @@
 - **Before:** Filtered by shares count (meaningless)
 - **After:** Filters by actual USD amount
 - **Impact:** Only stores real $10k+ whale trades
+
+### **4. Closed Market Filtering (NEW)**
+- **Before:** Tracked all markets, including resolved ones
+- **After:** Automatically skips closed/resolved markets
+- **Check:** market.closed, market.active, market.endDate
+- **Impact:** Only collect trades on active, ongoing markets
 
 ---
 
@@ -79,12 +86,28 @@ LIMIT 20;
 ```typescript
 // BEFORE (WRONG)
 const size = parseFloat(t.size || t.amount || 0);
+// Stored shares as USD - completely wrong!
 
 // AFTER (CORRECT)
-const shares = parseFloat(t.size || t.amount || 0);
-const price = parseFloat(t.price || 0);
-const size = shares * price; // Real USD amount
+const shares = parseFloat(t.size || t.amount || 0);  // Position size
+const price = parseFloat(t.price || 0);              // Price per share
+const usd = shares * price;                          // USD amount spent
+
+// Now we store BOTH:
+shares: 428736,    // 428,736 outcome tokens
+usd: 428.73        // $428.73 USD spent
 ```
+
+### **What Each Field Means:**
+- `shares` = Number of outcome tokens purchased (potential payout if wins)
+- `price` = Price per share (e.g., 0.001 = 0.1¢)
+- `usd` = USD amount spent (shares × price)
+
+**Example:**
+- Buy 428,736 YES shares at $0.001 each
+- `shares: 428736` (if YES wins, get $428,736 payout)
+- `price: 0.001`
+- `usd: 428.73` (spent $428.73 USD)
 
 ### **User Attribution:**
 ```typescript
