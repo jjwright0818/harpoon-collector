@@ -216,12 +216,6 @@ async function fetchAndStoreSnapshot() {
       const batch = trackedMarkets.slice(i, i + 20);
       
       await Promise.all(batch.map(async (market) => {
-        // Fetch current market data with live prices
-        let yes_price = market.yes_price || 0.5;
-        let no_price = market.no_price || 0.5;
-        let volume_24h = market.volume_24h || 0;
-        let liquidity = market.liquidity || 0;
-
         try {
           // Fetch live market data
           const marketResponse = await fetch(
@@ -234,55 +228,66 @@ async function fetchAndStoreSnapshot() {
             }
           );
 
-          if (marketResponse.ok) {
-            const marketData = await marketResponse.json();
-            yes_price = parseFloat(marketData.outcomePrices?.[0] || marketData.clobTokenIds?.[0]?.price || 0.5);
-            no_price = parseFloat(marketData.outcomePrices?.[1] || marketData.clobTokenIds?.[1]?.price || 0.5);
-            volume_24h = parseFloat(marketData.volume24hr || marketData.volumeNum || volume_24h);
-            liquidity = parseFloat(marketData.liquidity || liquidity);
+          if (!marketResponse.ok) {
+            console.log(`⚠️  Skipping market ${market.market_id} - API error`);
+            return; // Skip this market
           }
+
+          const marketData = await marketResponse.json();
+          
+          // Extract prices
+          const yes_price = parseFloat(marketData.outcomePrices?.[0] || marketData.clobTokenIds?.[0]?.price);
+          const no_price = parseFloat(marketData.outcomePrices?.[1] || marketData.clobTokenIds?.[1]?.price);
+          const volume_24h = parseFloat(marketData.volume24hr || marketData.volumeNum || 0);
+          const liquidity = parseFloat(marketData.liquidity || 0);
+
+          // Validate: SKIP markets without valid price data
+          if (!yes_price || isNaN(yes_price) || !no_price || isNaN(no_price)) {
+            console.log(`⚠️  Skipping market ${market.market_id} - missing price data (yes: ${yes_price}, no: ${no_price})`);
+            return; // Skip this market - no valid prices
+          }
+
+          // Validate: SKIP if market is closed/inactive
+          if (!marketData.active && marketData.closed) {
+            console.log(`⚠️  Skipping market ${market.market_id} - market closed`);
+            return;
+          }
+
+          const latestSnapshot: MarketSnapshot = {
+            market_id: market.market_id,
+            event_id: market.event_id,
+            snapshot_time: currentTimestamp.toISOString(),
+            yes_price: yes_price,
+            no_price: no_price,
+            spread: Math.abs(yes_price - no_price),
+            volume_24h: volume_24h,
+            liquidity: liquidity,
+            price_change_5min: null,
+            price_change_1h: null,
+            price_change_24h: null,
+            volume_change_24h: null,
+            platform: 'polymarket',
+            status: marketData.active ? 'active' : 'closed',
+          };
+
+          // Calculate price changes (simplified - fetch latest previous snapshot)
+          const { data: previousSnapshots } = await supabase
+            .from('active_week_data')
+            .select('snapshot_time, yes_price, volume_24h')
+            .eq('market_id', market.market_id)
+            .order('snapshot_time', { ascending: false })
+            .limit(1);
+
+          if (previousSnapshots && previousSnapshots.length > 0) {
+            const prev = previousSnapshots[0];
+            latestSnapshot.price_change_5min = latestSnapshot.yes_price - prev.yes_price;
+            latestSnapshot.volume_change_24h = latestSnapshot.volume_24h - prev.volume_24h;
+          }
+
+          snapshotsToInsert.push(latestSnapshot);
         } catch (e) {
-          // Use defaults if fetch fails
+          console.log(`⚠️  Skipping market ${market.market_id} - fetch failed:`, e);
         }
-
-        // Ensure prices are never null, undefined, NaN, or 0
-        if (!yes_price || isNaN(yes_price)) yes_price = 0.5;
-        if (!no_price || isNaN(no_price)) no_price = 0.5;
-        if (!volume_24h || isNaN(volume_24h)) volume_24h = 0;
-        if (!liquidity || isNaN(liquidity)) liquidity = 0;
-
-        const latestSnapshot: MarketSnapshot = {
-          market_id: market.market_id,
-          event_id: market.event_id,
-          snapshot_time: currentTimestamp.toISOString(),
-          yes_price: yes_price,
-          no_price: no_price,
-          spread: Math.abs(yes_price - no_price),
-          volume_24h: volume_24h,
-          liquidity: liquidity,
-          price_change_5min: null,
-          price_change_1h: null,
-          price_change_24h: null,
-          volume_change_24h: null,
-          platform: 'polymarket',
-          status: market.status,
-        };
-
-        // Calculate price changes (simplified - fetch latest previous snapshot)
-        const { data: previousSnapshots } = await supabase
-          .from('active_week_data')
-          .select('snapshot_time, yes_price, volume_24h')
-          .eq('market_id', market.market_id)
-          .order('snapshot_time', { ascending: false })
-          .limit(1);
-
-        if (previousSnapshots && previousSnapshots.length > 0) {
-          const prev = previousSnapshots[0];
-          latestSnapshot.price_change_5min = latestSnapshot.yes_price - prev.yes_price;
-          latestSnapshot.volume_change_24h = latestSnapshot.volume_24h - prev.volume_24h;
-        }
-
-        snapshotsToInsert.push(latestSnapshot);
       }));
 
       // Small delay between batches
@@ -299,8 +304,11 @@ async function fetchAndStoreSnapshot() {
       if (insertError) {
         console.error('❌ Error inserting snapshots:', insertError);
       } else {
-        console.log(`✅ Inserted ${snapshotsToInsert.length} market snapshots`);
+        const skipped = trackedMarkets.length - snapshotsToInsert.length;
+        console.log(`✅ Inserted ${snapshotsToInsert.length} market snapshots (${skipped} skipped due to missing/invalid data)`);
       }
+    } else {
+      console.log(`⚠️  No valid market snapshots to insert (all ${trackedMarkets.length} markets skipped)`);
     }
   } catch (error) {
     console.error('❌ Error in snapshot collection:', error);
