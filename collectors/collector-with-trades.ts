@@ -37,7 +37,7 @@ const SNAPSHOT_HISTORY_DAYS = 7; // Keep snapshots for 7 days
 
 // Market discovery thresholds
 const MIN_VOLUME_THRESHOLD = 100000; // $100k minimum volume to track
-const MARKET_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // Refresh market list every hour
+const MARKET_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // Refresh market list every 15 minutes (faster discovery)
 
 // Thresholds for trades
 const LARGE_TRADE_THRESHOLD = 1000;  // $1k (for flagging)
@@ -85,6 +85,11 @@ interface Trade {
   fee: number;
   maker_address: string;
   taker_address: string;
+  trader_username: string | null;        // Polymarket username
+  trader_pseudonym: string | null;       // Auto-generated nickname
+  trader_wallet: string | null;          // Actual wallet address
+  trader_bio: string | null;             // User bio
+  trader_profile_image: string | null;   // Profile picture URL
   timestamp: string;
   platform: string;
   is_large_trade: boolean;
@@ -397,10 +402,11 @@ async function fetchAndStoreTrades() {
           }
 
           // Fetch trades using the correct conditionId parameter
-          const tenMinutesAgo = Math.floor((Date.now() - 10 * 60 * 1000) / 1000);
+          // Use 30-minute lookback to catch trades during restarts/gaps
+          const thirtyMinutesAgo = Math.floor((Date.now() - 30 * 60 * 1000) / 1000);
           
           const response = await fetch(
-            `https://data-api.polymarket.com/trades?market=${market.condition_id}&after=${tenMinutesAgo}&limit=200`,
+            `https://data-api.polymarket.com/trades?market=${market.condition_id}&after=${thirtyMinutesAgo}&limit=200`,
             {
               headers: {
                 'Accept': 'application/json',
@@ -435,12 +441,15 @@ async function fetchAndStoreTrades() {
           const newTrades: Trade[] = trades
             .filter((t: any) => {
               const tradeTime = new Date(t.timestamp * 1000).getTime(); // Unix timestamp is in seconds
-              const size = parseFloat(t.size || t.amount || 0);
-              return tradeTime > latestTimestamp && size >= MIN_TRADE_SIZE_TO_STORE;
+              const shares = parseFloat(t.size || t.amount || 0);
+              const price = parseFloat(t.price || 0);
+              const sizeUSD = shares * price; // Calculate actual USD amount for filtering
+              return tradeTime > latestTimestamp && sizeUSD >= MIN_TRADE_SIZE_TO_STORE;
             })
             .map((t: any) => {
-              const size = parseFloat(t.size || t.amount || 0);
+              const shares = parseFloat(t.size || t.amount || 0);
               const price = parseFloat(t.price || 0);
+              const size = shares * price; // Calculate actual USD amount
               
               return {
                 id: t.transactionHash || `${market.market_id}-${t.timestamp}-${t.asset}`, // Use transaction hash, fallback to unique combo
@@ -454,8 +463,14 @@ async function fetchAndStoreTrades() {
                 price: price,
                 size: size,
                 fee: parseFloat(t.fee || t.makerFee || 0),
-                maker_address: t.maker_address || t.maker || '',
+                maker_address: t.proxyWallet || t.maker_address || t.maker || '',
                 taker_address: t.taker_address || t.taker || '',
+                // NEW: Capture user/trader information
+                trader_username: t.name || null,
+                trader_pseudonym: t.pseudonym || null,
+                trader_wallet: t.proxyWallet || t.wallet || null,
+                trader_bio: t.bio || null,
+                trader_profile_image: t.profileImageOptimized || t.profileImage || null,
                 timestamp: new Date(t.timestamp * 1000).toISOString(), // Convert Unix timestamp to ISO string
                 platform: 'polymarket',
                 is_large_trade: size >= LARGE_TRADE_THRESHOLD,
