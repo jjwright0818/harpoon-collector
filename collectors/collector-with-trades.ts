@@ -87,93 +87,101 @@ interface Trade {
 
 /**
  * Discover and refresh markets from Polymarket
- * Fetches ONLY political markets with >= $100k volume
- * Excludes: sports, entertainment, media, crypto, pop culture
+ * Uses Polymarket's politics tag to efficiently fetch ONLY political markets
+ * Then filters out sports, entertainment, crypto, weather
  */
 async function discoverMarkets() {
   console.log(`\n🔍 [${new Date().toISOString()}] Discovering political markets...`);
   try {
-    // Fetch all markets from Polymarket
-    const response = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=1000', {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'HarpoonBot/1.0'
-      }
-    });
+    // Exclusion keywords to filter out non-political content
+    const exclusionKeywords = [
+      'f1', 'formula 1', 'nfl', 'nba', 'mlb', 'nhl', 'soccer', 'football',
+      'basketball', 'tennis', 'golf', 'boxing', 'mma', 'ufc',
+      'poker', 'heads-up poker', 'wsop', 'world series of poker',
+      'premier league', 'champions league', 'la liga', 'serie a', 'bundesliga',
+      'oscar', 'emmy', 'grammy', 'movie', 'film', 'actor',
+      'bitcoin price', 'ethereum price', 'btc hit', 'eth hit', 'solana price',
+      'weather', 'temperature', 'celsius', 'fahrenheit'
+    ];
 
-    if (!response.ok) {
-      console.error('❌ Failed to fetch markets from Polymarket');
-      return;
+    let allEvents: any[] = [];
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    // Fetch all political events with pagination
+    console.log('   Fetching from politics tag...');
+    while (hasMore) {
+      const url = `https://gamma-api.polymarket.com/events?tag=politics&closed=false&limit=${limit}&offset=${offset}`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'HarpoonBot/1.0'
+        }
+      });
+
+      if (!response.ok) {
+        console.error(`⚠️  Failed to fetch events at offset ${offset}`);
+        break;
+      }
+
+      const eventsData = await response.json();
+      const events = Array.isArray(eventsData) ? eventsData : (eventsData.data || []);
+
+      if (events.length === 0) {
+        hasMore = false;
+      } else {
+        allEvents = allEvents.concat(events);
+        offset += limit;
+        
+        // Small delay to respect rate limits
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
 
-    const marketsData = await response.json();
-    const markets = Array.isArray(marketsData) ? marketsData : (marketsData.data || []);
+    console.log(`   Fetched ${allEvents.length} political events`);
 
-    // Political keywords to look for
-    const politicalKeywords = [
-      'election', 'president', 'senate', 'congress', 'governor', 'democrat', 'republican',
-      'trump', 'biden', 'harris', 'political', 'politics', 'vote', 'campaign',
-      'fed', 'federal reserve', 'recession', 'inflation', 'gdp', 'unemployment',
-      'policy', 'legislation', 'bill', 'law', 'supreme court', 'scotus',
-      'nato', 'china', 'russia', 'ukraine', 'taiwan', 'geopolitics', 'diplomacy',
-      'cabinet', 'administration', 'government', 'impeach', 'resign'
-    ];
+    // Extract all markets from events and filter
+    const qualifyingMarkets: any[] = [];
 
-    // Exclusion keywords (sports, entertainment, media, crypto, pop culture)
-    const exclusionKeywords = [
-      'nfl', 'nba', 'mlb', 'nhl', 'soccer', 'football', 'basketball', 'baseball',
-      'sport', 'team', 'game', 'playoff', 'championship', 'super bowl', 'world series',
-      'movie', 'film', 'actor', 'actress', 'oscar', 'emmy', 'grammy', 'award',
-      'music', 'album', 'artist', 'celebrity', 'kardashian', 'taylor swift',
-      'bitcoin', 'ethereum', 'crypto', 'nft', 'dogecoin', 'solana',
-      'stock', 'tesla', 'apple', 'google', 'amazon', 'meta',
-      'entertainment', 'pop culture', 'tiktok', 'youtube', 'influencer'
-    ];
+    for (const event of allEvents) {
+      const markets = event.markets || [];
+      
+      for (const market of markets) {
+        // Check volume threshold
+        const volumeNum = parseFloat(market.volumeNum || market.volume || 0);
+        if (volumeNum < MIN_VOLUME_THRESHOLD) continue;
 
-    // Filter for political markets
-    const qualifyingMarkets = markets
-      .filter((m: any) => {
-        const volume = parseFloat(m.volume24hr || m.volume_24h || 0);
-        if (volume < MIN_VOLUME_THRESHOLD) return false;
-
-        // Get searchable text (question, description, tags)
+        // Get searchable text
         const searchText = [
-          m.question || '',
-          m.description || '',
-          m.groupItemTitle || '',
-          m.marketSlug || '',
-          ...(m.tags || [])
+          market.question || '',
+          market.description || '',
+          event.title || '',
+          market.groupItemTitle || ''
         ].join(' ').toLowerCase();
-
-        // Check for political tag or keywords
-        const hasPoliticalTag = (m.tags || []).some((tag: string) => 
-          tag.toLowerCase().includes('politic')
-        );
-        
-        const hasPoliticalKeyword = politicalKeywords.some(keyword => 
-          searchText.includes(keyword.toLowerCase())
-        );
 
         // Check for exclusion keywords
         const hasExclusionKeyword = exclusionKeywords.some(keyword => 
           searchText.includes(keyword.toLowerCase())
         );
 
-        // Must have political content AND not be excluded
-        return (hasPoliticalTag || hasPoliticalKeyword) && !hasExclusionKeyword;
-      })
-      .map((m: any) => ({
-        market_id: m.id || m.market_id || m.conditionId,
-        event_id: m.eventId || m.event_id || m.groupItemTitle || null,
-        volume_24h: parseFloat(m.volume24hr || m.volume_24h || 0),
-        yes_price: parseFloat(m.outcomePrices?.[0] || m.yes_price || 0),
-        no_price: parseFloat(m.outcomePrices?.[1] || m.no_price || 0),
-        liquidity: parseFloat(m.liquidity || 0),
-        status: m.active ? 'active' : 'closed'
-      }));
+        if (hasExclusionKeyword) continue;
+
+        // Extract market data
+        qualifyingMarkets.push({
+          market_id: market.id || market.conditionId,
+          event_id: event.id || event.slug,
+          volume_24h: volumeNum,
+          yes_price: parseFloat(market.outcomePrices?.[0] || 0.5),
+          no_price: parseFloat(market.outcomePrices?.[1] || 0.5),
+          liquidity: parseFloat(market.liquidity || 0),
+          status: market.active ? 'active' : 'closed'
+        });
+      }
+    }
 
     trackedMarkets = qualifyingMarkets;
-    console.log(`✅ Discovered ${qualifyingMarkets.length} POLITICAL markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume`);
+    console.log(`✅ Discovered ${qualifyingMarkets.length} political markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume`);
 
     return qualifyingMarkets;
   } catch (error) {
