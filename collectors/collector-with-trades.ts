@@ -103,13 +103,21 @@ async function discoverMarkets() {
   try {
     // Exclusion keywords to filter out non-political content
     const exclusionKeywords = [
+      // Sports
       'f1', 'formula 1', 'nfl', 'nba', 'mlb', 'nhl', 'soccer', 'football',
       'basketball', 'tennis', 'golf', 'boxing', 'mma', 'ufc',
       'poker', 'heads-up poker', 'wsop', 'world series of poker',
       'premier league', 'champions league', 'la liga', 'serie a', 'bundesliga',
+      // Entertainment
       'oscar', 'emmy', 'grammy', 'movie', 'film', 'actor',
-      'bitcoin price', 'ethereum price', 'btc hit', 'eth hit', 'solana price',
-      'weather', 'temperature', 'celsius', 'fahrenheit'
+      // Crypto (broader matching - any crypto price prediction)
+      'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol',
+      'crypto', 'cryptocurrency', 'dogecoin', 'doge', 'xrp', 'ripple',
+      // Weather
+      'weather', 'temperature', 'celsius', 'fahrenheit',
+      // Tech/Stock prices (not political)
+      'amazon', 'apple', 'tesla', 'nvidia', 'microsoft', 'google',
+      'anthropic'
     ];
 
     let allEvents: any[] = [];
