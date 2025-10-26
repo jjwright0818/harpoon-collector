@@ -209,39 +209,80 @@ async function fetchAndStoreSnapshot() {
     const currentTimestamp = new Date();
     const snapshotsToInsert: MarketSnapshot[] = [];
 
-    for (const market of trackedMarkets) {
-      const latestSnapshot: MarketSnapshot = {
-        market_id: market.market_id,
-        event_id: market.event_id,
-        snapshot_time: currentTimestamp.toISOString(),
-        yes_price: market.yes_price,
-        no_price: market.no_price,
-        spread: Math.abs(market.yes_price - market.no_price),
-        volume_24h: market.volume_24h,
-        liquidity: market.liquidity,
-        price_change_5min: null,
-        price_change_1h: null,
-        price_change_24h: null,
-        volume_change_24h: null,
-        platform: 'polymarket',
-        status: market.status,
-      };
+    console.log(`   Processing ${trackedMarkets.length} markets in batches...`);
 
-      // Calculate price changes (simplified - fetch latest previous snapshot)
-      const { data: previousSnapshots } = await supabase
-        .from('active_week_data')
-        .select('snapshot_time, yes_price, volume_24h')
-        .eq('market_id', market.market_id)
-        .order('snapshot_time', { ascending: false })
-        .limit(1);
+    // Process markets in batches to avoid rate limits
+    for (let i = 0; i < trackedMarkets.length; i += 20) {
+      const batch = trackedMarkets.slice(i, i + 20);
+      
+      await Promise.all(batch.map(async (market) => {
+        // Fetch current market data with live prices
+        let yes_price = market.yes_price || 0.5;
+        let no_price = market.no_price || 0.5;
+        let volume_24h = market.volume_24h || 0;
+        let liquidity = market.liquidity || 0;
 
-      if (previousSnapshots && previousSnapshots.length > 0) {
-        const prev = previousSnapshots[0];
-        latestSnapshot.price_change_5min = latestSnapshot.yes_price - prev.yes_price;
-        latestSnapshot.volume_change_24h = latestSnapshot.volume_24h - prev.volume_24h;
+        try {
+          // Fetch live market data
+          const marketResponse = await fetch(
+            `https://gamma-api.polymarket.com/markets/${market.market_id}`,
+            {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'HarpoonBot/1.0'
+              }
+            }
+          );
+
+          if (marketResponse.ok) {
+            const marketData = await marketResponse.json();
+            yes_price = parseFloat(marketData.outcomePrices?.[0] || marketData.clobTokenIds?.[0]?.price || 0.5);
+            no_price = parseFloat(marketData.outcomePrices?.[1] || marketData.clobTokenIds?.[1]?.price || 0.5);
+            volume_24h = parseFloat(marketData.volume24hr || marketData.volumeNum || volume_24h);
+            liquidity = parseFloat(marketData.liquidity || liquidity);
+          }
+        } catch (e) {
+          // Use defaults if fetch fails
+        }
+
+        const latestSnapshot: MarketSnapshot = {
+          market_id: market.market_id,
+          event_id: market.event_id,
+          snapshot_time: currentTimestamp.toISOString(),
+          yes_price: yes_price,
+          no_price: no_price,
+          spread: Math.abs(yes_price - no_price),
+          volume_24h: volume_24h,
+          liquidity: liquidity,
+          price_change_5min: null,
+          price_change_1h: null,
+          price_change_24h: null,
+          volume_change_24h: null,
+          platform: 'polymarket',
+          status: market.status,
+        };
+
+        // Calculate price changes (simplified - fetch latest previous snapshot)
+        const { data: previousSnapshots } = await supabase
+          .from('active_week_data')
+          .select('snapshot_time, yes_price, volume_24h')
+          .eq('market_id', market.market_id)
+          .order('snapshot_time', { ascending: false })
+          .limit(1);
+
+        if (previousSnapshots && previousSnapshots.length > 0) {
+          const prev = previousSnapshots[0];
+          latestSnapshot.price_change_5min = latestSnapshot.yes_price - prev.yes_price;
+          latestSnapshot.volume_change_24h = latestSnapshot.volume_24h - prev.volume_24h;
+        }
+
+        snapshotsToInsert.push(latestSnapshot);
+      }));
+
+      // Small delay between batches
+      if (i + 20 < trackedMarkets.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
-
-      snapshotsToInsert.push(latestSnapshot);
     }
 
     if (snapshotsToInsert.length > 0) {
