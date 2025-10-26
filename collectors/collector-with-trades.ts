@@ -82,7 +82,7 @@ interface Trade {
   outcome_index: number;
   price: number;
   shares: number;                        // Number of outcome tokens/shares
-  usd: number;                           // USD amount spent (shares × price)
+  size: number;                          // USD amount spent (shares × price)
   fee: number;
   maker_address: string;
   taker_address: string;
@@ -453,13 +453,13 @@ async function fetchAndStoreTrades() {
               const tradeTime = new Date(t.timestamp * 1000).getTime(); // Unix timestamp is in seconds
               const shares = parseFloat(t.size || t.amount || 0);
               const price = parseFloat(t.price || 0);
-              const usdAmount = shares * price; // Calculate actual USD amount for filtering
-              return tradeTime > latestTimestamp && usdAmount >= MIN_TRADE_SIZE_TO_STORE;
+              const sizeUSD = shares * price; // Calculate actual USD amount for filtering
+              return tradeTime > latestTimestamp && sizeUSD >= MIN_TRADE_SIZE_TO_STORE;
             })
             .map((t: any) => {
               const shares = parseFloat(t.size || t.amount || 0);
               const price = parseFloat(t.price || 0);
-              const usd = shares * price; // Calculate actual USD amount
+              const size = shares * price; // Calculate actual USD amount
               
               return {
                 id: t.transactionHash || `${market.market_id}-${t.timestamp}-${t.asset}`, // Use transaction hash, fallback to unique combo
@@ -472,7 +472,7 @@ async function fetchAndStoreTrades() {
                 outcome_index: t.outcome_index || 0,
                 price: price,
                 shares: shares,  // Number of outcome tokens
-                usd: usd,        // USD amount spent
+                size: size,      // USD amount spent
                 fee: parseFloat(t.fee || t.makerFee || 0),
                 maker_address: t.proxyWallet || t.maker_address || t.maker || '',
                 taker_address: t.taker_address || t.taker || '',
@@ -484,8 +484,8 @@ async function fetchAndStoreTrades() {
                 trader_profile_image: t.profileImageOptimized || t.profileImage || null,
                 timestamp: new Date(t.timestamp * 1000).toISOString(), // Convert Unix timestamp to ISO string
                 platform: 'polymarket',
-                is_large_trade: usd >= LARGE_TRADE_THRESHOLD,
-                is_whale_trade: usd >= WHALE_TRADE_THRESHOLD,
+                is_large_trade: size >= LARGE_TRADE_THRESHOLD,
+                is_whale_trade: size >= WHALE_TRADE_THRESHOLD,
                 price_impact: null, // Calculate later if needed
                 platform_data: t
               };
