@@ -393,6 +393,7 @@ async function fetchAndStoreTrades() {
           // Fetch trades for ALL tokens in this market (Yes and No)
           const tenMinutesAgo = Math.floor((Date.now() - 10 * 60 * 1000) / 1000);
           const allTrades: any[] = [];
+          const seenTransactions = new Set<string>(); // Deduplicate by transaction hash
 
           // Query each token separately
           for (const tokenId of market.token_ids) {
@@ -410,7 +411,15 @@ async function fetchAndStoreTrades() {
               if (response.ok) {
                 const tradesData = await response.json();
                 const tokenTrades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
-                allTrades.push(...tokenTrades);
+                
+                // Deduplicate trades by transaction hash + asset
+                for (const trade of tokenTrades) {
+                  const tradeKey = `${trade.transactionHash || trade.timestamp}-${trade.asset}`;
+                  if (!seenTransactions.has(tradeKey)) {
+                    seenTransactions.add(tradeKey);
+                    allTrades.push(trade);
+                  }
+                }
               } else {
                 failedFetches++;
               }
@@ -551,7 +560,7 @@ console.log(`   🧹 Cleanup: every ${CLEANUP_INTERVAL_MS / (1000 * 60 * 60)} ho
 console.log(`   📦 Storage: ~${SNAPSHOT_HISTORY_DAYS} days snapshots + ${TRADE_HISTORY_HOURS}h trades`);
 console.log(`   💵 Tracking markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume\n`);
 
-// Discover markets first, then start collecting with staggered start times
+// Discover markets first, then start collecting immediately
 (async () => {
   await discoverMarkets();
   
@@ -559,13 +568,13 @@ console.log(`   💵 Tracking markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleSt
   fetchAndStoreSnapshot();
   setInterval(fetchAndStoreSnapshot, COLLECTION_INTERVAL_MS);
   
-  // Delay trade collection by 2 minutes to avoid overlap with snapshots
-  console.log('⏰ Trade collection will start in 2 minutes to avoid API overlap...\n');
+  // Start trade collection after 30 seconds (just enough time for first snapshot to complete)
+  console.log('⏰ Trade collection will start in 30 seconds...\n');
   setTimeout(() => {
     console.log('💰 Starting trade collection...\n');
     fetchAndStoreTrades();
     setInterval(fetchAndStoreTrades, TRADE_COLLECTION_INTERVAL_MS);
-  }, 2 * 60 * 1000); // 2 minute delay
+  }, 30 * 1000); // 30 second delay
   
   // Schedule other tasks
   setInterval(discoverMarkets, MARKET_REFRESH_INTERVAL_MS); // Refresh market list hourly

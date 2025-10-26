@@ -135,6 +135,7 @@ async function backfillWhaleTrades() {
       try {
         // Fetch trades for ALL tokens in this market
         const allTrades: any[] = [];
+        const seenTransactions = new Set<string>(); // Deduplicate by transaction hash
         
         for (const tokenId of market.token_ids) {
           try {
@@ -151,7 +152,15 @@ async function backfillWhaleTrades() {
             if (response.ok) {
               const tradesData = await response.json();
               const tokenTrades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
-              allTrades.push(...tokenTrades);
+              
+              // Deduplicate trades by transaction hash + asset
+              for (const trade of tokenTrades) {
+                const tradeKey = `${trade.transactionHash || trade.timestamp}-${trade.asset}`;
+                if (!seenTransactions.has(tradeKey)) {
+                  seenTransactions.add(tradeKey);
+                  allTrades.push(trade);
+                }
+              }
             } else {
               failedFetches++;
             }
