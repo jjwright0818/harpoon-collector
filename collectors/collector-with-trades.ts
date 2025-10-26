@@ -362,11 +362,11 @@ async function fetchAndStoreTrades() {
       await Promise.all(batch.map(async (market) => {
         try {
           // Fetch recent trades for this market from Polymarket Trades API
-          // Get trades from last 2 minutes to avoid duplicates
-          const sinceTime = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+          // Get trades from last 10 minutes (converted to Unix timestamp)
+          const tenMinutesAgo = Math.floor((Date.now() - 10 * 60 * 1000) / 1000);
           
           const response = await fetch(
-            `https://data-api.polymarket.com/trades?market=${market.market_id}&limit=100`,
+            `https://data-api.polymarket.com/trades?market=${market.market_id}&after=${tenMinutesAgo}&limit=200`,
             {
               headers: {
                 'Accept': 'application/json',
@@ -381,33 +381,7 @@ async function fetchAndStoreTrades() {
           }
 
           const tradesData = await response.json();
-          let trades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
-
-          // Debug: Log first trade to understand structure
-          if (trades.length > 0) {
-            console.log(`📋 Sample trade for market ${market.market_id}:`, JSON.stringify(trades[0]).substring(0, 200));
-          }
-
-          // CRITICAL: Filter to only trades for THIS market
-          // The trades API sometimes returns trades from related markets in the same event
-          const originalCount = trades.length;
-          trades = trades.filter((t: any) => {
-            // Check multiple possible fields for market identifier
-            const tradeMarket = t.market || t.market_id;
-            const tradeAssetId = t.asset_id || t.asset;
-            
-            // If trade has a market field, it must match
-            if (tradeMarket) {
-              return String(tradeMarket) === String(market.market_id);
-            }
-            
-            // Otherwise allow it through (API might not include market field)
-            return true;
-          });
-
-          if (originalCount > trades.length) {
-            console.log(`   Filtered ${originalCount - trades.length} trades that didn't match market ${market.market_id}`);
-          }
+          const trades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
 
           if (trades.length === 0) return;
 
