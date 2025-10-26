@@ -174,13 +174,18 @@ async function discoverMarkets() {
         const volumeNum = parseFloat(market.volumeNum || market.volume || 0);
         if (volumeNum < MIN_VOLUME_THRESHOLD) continue;
 
-        // Skip closed/resolved markets
-        if (market.closed === true || market.active === false) continue;
+        // Skip explicitly closed markets (but allow undefined/null to pass through)
+        if (market.closed === true) continue;
+        if (market.active === false) continue;
         
-        // Skip markets with past end dates
+        // Skip markets with past end dates (only if endDate exists and is valid)
         if (market.endDate) {
-          const endDate = new Date(market.endDate);
-          if (endDate < new Date()) continue;
+          try {
+            const endDate = new Date(market.endDate);
+            if (!isNaN(endDate.getTime()) && endDate < new Date()) continue;
+          } catch (e) {
+            // Invalid date format, allow market through
+          }
         }
 
         // Get searchable text
