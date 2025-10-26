@@ -1,0 +1,393 @@
+================================================================================
+HARPOON COLLECTOR - SUPABASE DATA DICTIONARY
+================================================================================
+Last Updated: October 26, 2025
+
+This document explains every column in the two main Supabase tables used by
+the Harpoon Collector system for tracking Polymarket political prediction 
+markets.
+
+================================================================================
+TABLE 1: active_week_data
+================================================================================
+Purpose: Stores time-series snapshots of market prices and metrics
+Frequency: Collected every ~60 seconds
+Retention: Rolling 7-day window (auto-cleaned)
+
+COLUMNS:
+--------
+
+id (SERIAL PRIMARY KEY)
+  - Auto-incrementing unique identifier for each snapshot
+  - Used internally by Supabase
+  
+market_id (VARCHAR(255), NOT NULL)
+  - Polymarket's numeric market identifier
+  - Example: "521532"
+  - Used to join with trades table and fetch live data from API
+  
+event_id (VARCHAR(255))
+  - Polymarket's event/slug identifier that groups related markets
+  - Example: "presidential-election-winner-2024"
+  - One event can have multiple markets (e.g., "Trump wins?", "Biden wins?")
+  
+market_question (VARCHAR(500))
+  - Human-readable question the market is predicting
+  - Example: "Will Donald Trump win the 2024 Presidential Election?"
+  - Makes data queries more readable without needing to look up market details
+  
+condition_id (VARCHAR(255))
+  - Polymarket's hexadecimal condition identifier (blockchain-related)
+  - Example: "0x1234567890abcdef..."
+  - Required for fetching trades via the Data API
+  - Different from market_id despite both identifying the same market
+  
+snapshot_time (TIMESTAMP, NOT NULL)
+  - Exact time when this snapshot was captured (UTC)
+  - Example: "2025-10-26 08:03:23"
+  - Used for time-series analysis and charting
+  
+yes_price (DECIMAL(10,8), NOT NULL)
+  - Current price of the "Yes" outcome token (0.00 to 1.00)
+  - Example: 0.65 means 65¢ per share = 65% implied probability
+  - Represents the market's confidence that the event will happen
+  
+no_price (DECIMAL(10,8), NOT NULL)
+  - Current price of the "No" outcome token (0.00 to 1.00)
+  - Example: 0.35 means 35¢ per share = 35% implied probability
+  - Should approximately equal 1 - yes_price (minus spread)
+  
+spread (DECIMAL(10,8))
+  - Difference between (yes_price + no_price) and 1.00
+  - Example: 0.02 means 2¢ spread
+  - Indicates market liquidity and maker/taker fees
+  - Smaller spread = more liquid market
+  
+volume_24h (DECIMAL(15,2))
+  - Total dollar volume traded in last 24 hours
+  - Example: 1250000.00 = $1.25M in volume
+  - Used to filter high-activity markets (threshold: $100k+)
+  
+liquidity (DECIMAL(15,2))
+  - Total available liquidity in the order book (USD)
+  - Example: 500000.00 = $500k available liquidity
+  - Higher liquidity = easier to place large trades without slippage
+  
+price_change_5min (DECIMAL(10,8))
+  - Price change vs. 5 minutes ago
+  - Example: 0.03 means price increased 3¢ in 5 minutes
+  - Used for real-time alerts on rapid price movements
+  
+price_change_1h (DECIMAL(10,8))
+  - Price change vs. 1 hour ago
+  - Example: -0.05 means price dropped 5¢ in 1 hour
+  - Used for short-term trend analysis
+  
+price_change_24h (DECIMAL(10,8))
+  - Price change vs. 24 hours ago
+  - Example: 0.12 means price increased 12¢ in 24 hours
+  - Used for daily momentum indicators
+  
+volume_change_24h (DECIMAL(15,2))
+  - Change in 24h volume vs. previous period
+  - Example: 250000.00 means volume increased by $250k
+  - Indicates increasing/decreasing interest
+  
+platform (VARCHAR(50), DEFAULT 'polymarket')
+  - Source platform name
+  - Currently only "polymarket", prepared for multi-platform support (Kalshi, etc.)
+  
+status (VARCHAR(50), DEFAULT 'active')
+  - Market status: 'active', 'closed', 'resolved', etc.
+  - Used to filter out closed markets
+  
+platform_data (JSONB)
+  - Raw JSON response from Polymarket API
+  - Stores complete original data for debugging and future feature development
+  - Example: {"endDate": "2024-11-05", "volume": 1250000, ...}
+  
+created_at_db (TIMESTAMP, DEFAULT NOW())
+  - When this record was inserted into the database (UTC)
+  - Different from snapshot_time (when data was collected vs. when it was saved)
+  
+
+INDEXES:
+--------
+- idx_active_week_market_id: Fast lookups by market_id
+- idx_active_week_snapshot_time: Chronological queries
+- idx_active_week_market_time: Market-specific time-series data
+- idx_active_week_event_id: Group markets by event
+- idx_active_week_price_change: Find markets with largest price swings
+
+CONSTRAINTS:
+------------
+- unique_market_snapshot: Prevents duplicate snapshots (same market + time)
+- chk_prices: Ensures prices are between 0 and 1
+
+
+================================================================================
+TABLE 2: trades
+================================================================================
+Purpose: Stores individual large trades/transactions ($10k+ "whale trades")
+Frequency: Collected every ~5 minutes (last 30 minutes of trades)
+Retention: Rolling 48-hour window (auto-cleaned)
+
+COLUMNS:
+--------
+
+id (VARCHAR(255), PRIMARY KEY)
+  - Unique transaction identifier
+  - Usually Polygon blockchain transaction hash
+  - Example: "0x6d39f5329ee5388879d465fa2a5596db668a68a97ee46fb6b1a688e8dc883613"
+  - Fallback: {market_id}-{timestamp}-{asset_id} if transaction hash unavailable
+  
+market_id (VARCHAR(255), NOT NULL)
+  - Polymarket market identifier where this trade occurred
+  - Example: "521532"
+  - Links to active_week_data.market_id
+  
+event_id (VARCHAR(255))
+  - Polymarket event/slug identifier
+  - Example: "presidential-election-winner-2024"
+  - Groups related trades across multiple markets
+  
+market_question (VARCHAR(500))
+  - Human-readable market question
+  - Example: "Will Donald Trump win the 2024 Presidential Election?"
+  - Stored here for easy querying without joining tables
+  
+asset_id (VARCHAR(255))
+  - Token contract ID for the specific outcome being traded
+  - Example: "21742633143463906290569050155826241533067272736897614950488156847949938836455"
+  - Corresponds to either "Yes" or "No" token
+  - Required for blockchain verification
+  
+side (VARCHAR(10), NOT NULL)
+  - Trade direction: "BUY" or "SELL"
+  - BUY = trader is going long (betting Yes/outcome will happen)
+  - SELL = trader is shorting (betting No/outcome won't happen)
+  
+outcome (VARCHAR(10))
+  - Which outcome was traded: "Yes", "No", or specific candidate name
+  - Example: "Yes" = buying shares that event will happen
+  - Derived from the asset_id being traded
+  
+outcome_index (INT)
+  - Numeric index of the outcome (0 or 1)
+  - 0 = usually "No", 1 = usually "Yes"
+  - Used internally by Polymarket smart contracts
+  
+price (DECIMAL(10,8), NOT NULL)
+  - Price per share at which trade executed (0.00 to 1.00)
+  - Example: 0.65 = paid 65¢ per share
+  - Represents implied probability at time of trade
+  
+size (DECIMAL(15,2), NOT NULL)
+  - Total USD amount spent on the trade
+  - Example: 10000.00 = $10,000 trade
+  - Calculated as: shares × price
+  - Minimum threshold: $10,000 (whale trades only)
+  
+shares (DECIMAL(20,6))
+  - Number of outcome tokens/shares purchased
+  - Example: 15384.615385 shares bought
+  - Relationship: size = shares × price
+  - Important for calculating actual position sizes
+  
+fee (DECIMAL(10,2))
+  - Trading fee charged (USD)
+  - Example: 50.00 = $50 fee
+  - Polymarket typically charges ~2% on maker/taker spread
+  
+maker_address (VARCHAR(255))
+  - Blockchain wallet address of the liquidity provider (maker)
+  - Example: "0x1234567890abcdef1234567890abcdef12345678"
+  - The party providing liquidity to the order book
+  - May represent a proxy wallet, not the actual user wallet
+  
+taker_address (VARCHAR(255))
+  - Blockchain wallet address of the trader (taker)
+  - Example: "0xabcdef1234567890abcdef1234567890abcdef12"
+  - The party taking liquidity from the order book
+  - May represent a proxy wallet, not the actual user wallet
+  
+trader_username (VARCHAR(255))
+  - Polymarket username of the trader (if available)
+  - Example: "whale_trader_99"
+  - Not always available (many trades are anonymous)
+  - Helps identify repeat large traders
+  
+trader_pseudonym (VARCHAR(255))
+  - Alternative display name or nickname
+  - Example: "The Bitcoin Maxi"
+  - User-selected pseudonym on Polymarket
+  
+trader_wallet (VARCHAR(255))
+  - Primary wallet address associated with the trader's Polymarket account
+  - Different from maker_address/taker_address (those are proxy wallets)
+  - Used to track trader identity across multiple trades
+  
+trader_bio (TEXT)
+  - User's profile bio/description from Polymarket
+  - Example: "Professional political bettor since 2020"
+  - Provides context about the trader
+  
+trader_profile_image (TEXT)
+  - URL to trader's profile image
+  - Example: "https://polymarket-upload.s3.amazonaws.com/user123.jpg"
+  - Used for displaying trader profiles in UI
+  
+timestamp (TIMESTAMP, NOT NULL)
+  - When the trade was executed (UTC)
+  - Example: "2025-10-26 08:15:42"
+  - From Polymarket trade data (blockchain confirmation time)
+  
+platform (VARCHAR(50), DEFAULT 'polymarket')
+  - Source platform name
+  - Currently only "polymarket"
+  - Prepared for multi-platform support
+  
+is_large_trade (BOOLEAN, DEFAULT FALSE)
+  - Flag: TRUE if trade size >= $1,000
+  - Used for filtering "significant" trades
+  - Note: Current collector only stores trades >= $10k
+  
+is_whale_trade (BOOLEAN, DEFAULT FALSE)
+  - Flag: TRUE if trade size >= $10,000
+  - Used for filtering "whale" activity
+  - These are the trades we actively collect and store
+  
+price_impact (DECIMAL(10,8))
+  - How much this trade moved the market price
+  - Example: 0.02 = trade caused 2¢ price movement
+  - Calculated by comparing price before and after trade
+  - Larger trades typically have higher price impact
+  
+platform_data (JSONB)
+  - Raw JSON response from Polymarket trades API
+  - Stores complete original trade data
+  - Useful for debugging and future analytics
+  - Example: {"orderHash": "0x...", "feeRateBps": "200", ...}
+  
+created_at_db (TIMESTAMP, DEFAULT NOW())
+  - When this record was inserted into the database (UTC)
+  - Different from timestamp (when trade happened vs. when we stored it)
+  
+
+INDEXES:
+--------
+- idx_trades_market_id: Fast lookups by market
+- idx_trades_timestamp: Chronological queries
+- idx_trades_market_time: Market-specific trade history
+- idx_trades_size: Find largest trades quickly
+- idx_trades_large: Filter large trades (>= $1k)
+- idx_trades_whale: Filter whale trades (>= $10k)
+- idx_trades_username: Track specific traders
+- idx_trades_wallet: Track wallet activity
+
+CONSTRAINTS:
+------------
+- chk_side: Ensures side is either 'BUY' or 'SELL'
+- chk_price: Ensures price is between 0 and 1
+- chk_size: Ensures trade size is positive
+
+
+================================================================================
+KEY RELATIONSHIPS
+================================================================================
+
+1. active_week_data.market_id = trades.market_id
+   - Join snapshots with trades to analyze price impact
+
+2. active_week_data.event_id = trades.event_id
+   - Group all activity for a specific event
+
+3. Both tables include market_question for easy human-readable queries
+
+4. condition_id in active_week_data is used by collector to fetch trades
+
+
+================================================================================
+DATA COLLECTION FLOW
+================================================================================
+
+1. MARKET DISCOVERY (every 15 minutes):
+   - Fetch political markets from Polymarket Gamma API
+   - Filter for $100k+ volume
+   - Exclude sports, entertainment, crypto, weather markets
+   - Store ~639 qualifying markets in memory
+
+2. SNAPSHOT COLLECTION (every 60 seconds):
+   - For each tracked market, fetch current prices
+   - Calculate price changes (5min, 1h, 24h)
+   - Insert into active_week_data
+   - Skip markets with invalid/missing price data
+
+3. TRADE COLLECTION (every 5 minutes):
+   - For each tracked market, fetch recent trades (last 30 min)
+   - Filter for trades >= $10k
+   - Deduplicate by transaction hash
+   - Fetch trader profile data if available
+   - Insert into trades table
+
+4. AUTO-CLEANUP:
+   - active_week_data: Delete records older than 7 days
+   - trades: Delete records older than 48 hours
+   - Runs automatically every 6 hours
+
+
+================================================================================
+COMMON QUERIES
+================================================================================
+
+Get latest snapshot for all markets:
+  SELECT DISTINCT ON (market_id) 
+    market_question, yes_price, volume_24h, snapshot_time
+  FROM active_week_data
+  ORDER BY market_id, snapshot_time DESC;
+
+Get recent whale trades:
+  SELECT market_question, size, price, outcome, timestamp, trader_username
+  FROM trades
+  WHERE is_whale_trade = TRUE
+  ORDER BY timestamp DESC
+  LIMIT 50;
+
+Find biggest price movers in last hour:
+  SELECT market_question, yes_price, price_change_1h
+  FROM active_week_data
+  WHERE snapshot_time > NOW() - INTERVAL '1 hour'
+  ORDER BY ABS(price_change_1h) DESC
+  LIMIT 10;
+
+Track a specific trader's activity:
+  SELECT market_question, side, outcome, size, price, timestamp
+  FROM trades
+  WHERE trader_username = 'whale_trader_99'
+  ORDER BY timestamp DESC;
+
+Calculate total volume per market:
+  SELECT market_question, 
+         COUNT(*) as num_trades, 
+         SUM(size) as total_volume
+  FROM trades
+  WHERE timestamp > NOW() - INTERVAL '24 hours'
+  GROUP BY market_question
+  ORDER BY total_volume DESC;
+
+
+================================================================================
+NOTES & TIPS
+================================================================================
+
+- All timestamps are in UTC
+- Prices are in decimal format (0.65 = 65¢ = 65% probability)
+- Size/volume is always in USD
+- market_id is numeric, condition_id is hexadecimal
+- Use platform_data (JSONB) for advanced custom queries
+- Join active_week_data and trades to analyze trade impact on prices
+- trader_* columns may be NULL (many trades are anonymous)
+- Collector automatically handles duplicates via unique constraints
+
+================================================================================
+
