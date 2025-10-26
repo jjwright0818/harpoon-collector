@@ -45,11 +45,12 @@ const WHALE_TRADE_THRESHOLD = 10000; // $10k (for flagging)
 const MIN_TRADE_SIZE_TO_STORE = 10000; // Store trades >= $10k (whale trades only)
 
 // In-memory cache of markets to track
-let trackedMarkets: Array<{ market_id: string; event_id: string; volume_24h: number }> = [];
+let trackedMarkets: Array<{ market_id: string; event_id: string; market_question: string; volume_24h: number }> = [];
 
 interface MarketSnapshot {
   market_id: string;
   event_id: string;
+  market_question: string;
   snapshot_time: string;
   yes_price: number;
   no_price: number;
@@ -68,6 +69,7 @@ interface Trade {
   id: string;
   market_id: string;
   event_id: string | null;
+  market_question: string;
   asset_id: string;
   side: 'BUY' | 'SELL';
   outcome: string;
@@ -171,6 +173,7 @@ async function discoverMarkets() {
         qualifyingMarkets.push({
           market_id: market.id || market.conditionId,
           event_id: event.id || event.slug,
+          market_question: market.question || market.title || event.title || 'Unknown',
           volume_24h: volumeNum,
           yes_price: parseFloat(market.outcomePrices?.[0] || 0.5),
           no_price: parseFloat(market.outcomePrices?.[1] || 0.5),
@@ -275,6 +278,7 @@ async function fetchAndStoreSnapshot() {
           const latestSnapshot: MarketSnapshot = {
             market_id: market.market_id,
             event_id: market.event_id,
+            market_question: marketData.question || marketData.title || 'Unknown',
             snapshot_time: currentTimestamp.toISOString(),
             yes_price: yes_price,
             no_price: no_price,
@@ -408,6 +412,7 @@ async function fetchAndStoreTrades() {
                 id: t.id || `${market.market_id}-${t.timestamp}`,
                 market_id: market.market_id,
                 event_id: market.event_id,
+                market_question: market.market_question || 'Unknown',
                 asset_id: t.asset_id || t.token_id || '',
                 side: t.side?.toUpperCase() || 'BUY',
                 outcome: t.outcome || 'Yes',
