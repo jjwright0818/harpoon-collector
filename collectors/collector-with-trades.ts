@@ -235,9 +235,28 @@ async function fetchAndStoreSnapshot() {
 
           const marketData = await marketResponse.json();
           
-          // Extract prices
-          const yes_price = parseFloat(marketData.outcomePrices?.[0] || marketData.clobTokenIds?.[0]?.price);
-          const no_price = parseFloat(marketData.outcomePrices?.[1] || marketData.clobTokenIds?.[1]?.price);
+          // Parse outcomePrices - it's a JSON string like '["0.65","0.35"]'
+          let yes_price = 0;
+          let no_price = 0;
+
+          try {
+            if (marketData.outcomePrices) {
+              const prices = JSON.parse(marketData.outcomePrices);
+              if (Array.isArray(prices) && prices.length >= 2) {
+                yes_price = parseFloat(prices[0]);
+                no_price = parseFloat(prices[1]);
+              }
+            }
+          } catch (e) {
+            // If parsing fails, try clobTokenIds as fallback
+            if (marketData.clobTokenIds?.[0]?.price) {
+              yes_price = parseFloat(marketData.clobTokenIds[0].price);
+            }
+            if (marketData.clobTokenIds?.[1]?.price) {
+              no_price = parseFloat(marketData.clobTokenIds[1].price);
+            }
+          }
+
           const volume_24h = parseFloat(marketData.volume24hr || marketData.volumeNum || 0);
           const liquidity = parseFloat(marketData.liquidity || 0);
 
