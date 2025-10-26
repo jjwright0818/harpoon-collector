@@ -47,7 +47,6 @@ const MIN_TRADE_SIZE_TO_STORE = 10000; // Store trades >= $10k (whale trades onl
 // In-memory cache of markets to track
 let trackedMarkets: Array<{ 
   market_id: string; 
-  condition_id: string; // The hex conditionId for querying trades
   event_id: string; 
   market_question: string; 
   volume_24h: number;
@@ -55,6 +54,7 @@ let trackedMarkets: Array<{
 
 interface MarketSnapshot {
   market_id: string;
+  condition_id: string; // Hex conditionId for trades endpoint
   event_id: string;
   market_question: string;
   snapshot_time: string;
@@ -175,17 +175,12 @@ async function discoverMarkets() {
 
         if (hasExclusionKeyword) continue;
 
-        // Extract market data with conditionId for trade queries
+        // Extract market data (condition_id will be fetched and stored in database during snapshot)
         qualifyingMarkets.push({
           market_id: market.id || market.conditionId,
-          condition_id: market.conditionId || '', // The hex conditionId needed for trades endpoint
           event_id: event.id || event.slug,
           market_question: market.question || market.title || event.title || 'Unknown',
           volume_24h: volumeNum,
-          yes_price: parseFloat(market.outcomePrices?.[0] || 0.5),
-          no_price: parseFloat(market.outcomePrices?.[1] || 0.5),
-          liquidity: parseFloat(market.liquidity || 0),
-          status: market.active ? 'active' : 'closed'
         });
       }
     }
@@ -284,6 +279,7 @@ async function fetchAndStoreSnapshot() {
 
           const latestSnapshot: MarketSnapshot = {
             market_id: market.market_id,
+            condition_id: marketData.conditionId || '', // Store conditionId for trade queries
             event_id: market.event_id,
             market_question: marketData.question || marketData.title || 'Unknown',
             snapshot_time: currentTimestamp.toISOString(),
@@ -351,11 +347,29 @@ async function fetchAndStoreSnapshot() {
 async function fetchAndStoreTrades() {
   console.log(`\n💰 [${new Date().toISOString()}] Collecting trades...`);
   try {
-    // Use our discovered markets
-    if (trackedMarkets.length === 0) {
-      console.log('⚠️ No markets to track trades for');
+    // Query active markets from database (get latest snapshot for each market)
+    const { data: markets, error: queryError } = await supabase
+      .from('active_week_data')
+      .select('market_id, condition_id, event_id, market_question')
+      .eq('platform', 'polymarket')
+      .order('snapshot_time', { ascending: false });
+
+    if (queryError) {
+      console.error('❌ Failed to query markets:', queryError);
       return;
     }
+
+    if (!markets || markets.length === 0) {
+      console.log('⚠️ No markets found in database');
+      return;
+    }
+
+    // Deduplicate by market_id (get latest snapshot per market)
+    const uniqueMarkets = Array.from(
+      new Map(markets.map(m => [m.market_id, m])).values()
+    );
+
+    console.log(`📊 Checking ${uniqueMarkets.length} markets for trades...`);
 
     let totalTrades = 0;
     let largeTrades = 0;
@@ -363,8 +377,8 @@ async function fetchAndStoreTrades() {
     let failedFetches = 0;
 
     // Fetch trades for each market (in batches to avoid rate limits)
-    for (let i = 0; i < trackedMarkets.length; i += 5) {
-      const batch = trackedMarkets.slice(i, i + 5);
+    for (let i = 0; i < uniqueMarkets.length; i += 5) {
+      const batch = uniqueMarkets.slice(i, i + 5);
       
       await Promise.all(batch.map(async (market) => {
         try {
