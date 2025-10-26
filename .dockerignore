@@ -1,0 +1,12 @@
+# Exclude files not needed in production build
+node_modules
+.git
+.gitignore
+*.md
+README.md
+DEPLOY.md
+.env.local
+.env
+*.log
+sql/*.sql
+
