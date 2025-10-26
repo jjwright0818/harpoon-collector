@@ -460,7 +460,7 @@ async function fetchAndStoreTrades() {
                 market_id: market.market_id,
                 event_id: market.event_id,
                 market_question: market.market_question || 'Unknown',
-                asset_id: t.asset_id || t.token_id || '',
+                asset_id: t.asset || '', // The token ID being traded (Yes or No token)
                 side: t.side?.toUpperCase() || 'BUY',
                 outcome: t.outcome || 'Yes',
                 outcome_index: t.outcome_index || 0,
