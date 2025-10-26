@@ -42,7 +42,7 @@ const MARKET_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // Refresh market list every 
 // Thresholds for trades
 const LARGE_TRADE_THRESHOLD = 1000;  // $1k (for flagging)
 const WHALE_TRADE_THRESHOLD = 10000; // $10k (for flagging)
-const MIN_TRADE_SIZE_TO_STORE = 10000; // Only store trades >= $10k
+const MIN_TRADE_SIZE_TO_STORE = 1000; // Store trades >= $1k (lowered for better data collection)
 
 // In-memory cache of markets to track
 let trackedMarkets: Array<{ market_id: string; event_id: string; volume_24h: number }> = [];
@@ -349,6 +349,7 @@ async function fetchAndStoreTrades() {
     let totalTrades = 0;
     let largeTrades = 0;
     let whaleTrades = 0;
+    let failedFetches = 0;
 
     // Fetch trades for each market (in batches to avoid rate limits)
     for (let i = 0; i < trackedMarkets.length; i += 10) {
@@ -371,8 +372,8 @@ async function fetchAndStoreTrades() {
           );
 
           if (!response.ok) {
-            console.error(`⚠️ Failed to fetch trades for ${market.market_id}`);
-            return;
+            failedFetches++;
+            return; // Skip this market silently
           }
 
           const tradesData = await response.json();
@@ -447,10 +448,15 @@ async function fetchAndStoreTrades() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    // Summary
     if (totalTrades > 0) {
-      console.log(`✅ Collected ${totalTrades} new trades (${largeTrades} large, ${whaleTrades} whale)`);
+      console.log(`✅ Collected ${totalTrades} new trades (${largeTrades} >= $1k, ${whaleTrades} >= $10k)`);
     } else {
-      console.log(`   No new trades since last check`);
+      console.log(`   No new trades >= $1k since last check`);
+    }
+    
+    if (failedFetches > 0) {
+      console.log(`   ⚠️  ${failedFetches} markets failed to fetch (API errors/rate limits)`);
     }
   } catch (error) {
     console.error('❌ Error in trade collection:', error);
