@@ -47,10 +47,10 @@ const MIN_TRADE_SIZE_TO_STORE = 10000; // Store trades >= $10k (whale trades onl
 // In-memory cache of markets to track
 let trackedMarkets: Array<{ 
   market_id: string; 
+  condition_id: string; // The hex conditionId for querying trades
   event_id: string; 
   market_question: string; 
   volume_24h: number;
-  token_ids: string[]; // Token IDs for querying trades [yes_token, no_token]
 }> = [];
 
 interface MarketSnapshot {
@@ -175,29 +175,13 @@ async function discoverMarkets() {
 
         if (hasExclusionKeyword) continue;
 
-        // Extract token IDs for trade collection
-        const tokenIds: string[] = [];
-        if (market.clobTokenIds && Array.isArray(market.clobTokenIds)) {
-          tokenIds.push(...market.clobTokenIds);
-        } else if (typeof market.clobTokenIds === 'string') {
-          // Sometimes it's a JSON string
-          try {
-            const parsed = JSON.parse(market.clobTokenIds);
-            if (Array.isArray(parsed)) {
-              tokenIds.push(...parsed);
-            }
-          } catch (e) {
-            // If parsing fails, use empty array
-          }
-        }
-
-        // Extract market data
+        // Extract market data with conditionId for trade queries
         qualifyingMarkets.push({
           market_id: market.id || market.conditionId,
+          condition_id: market.conditionId || '', // The hex conditionId needed for trades endpoint
           event_id: event.id || event.slug,
           market_question: market.question || market.title || event.title || 'Unknown',
           volume_24h: volumeNum,
-          token_ids: tokenIds,
           yes_price: parseFloat(market.outcomePrices?.[0] || 0.5),
           no_price: parseFloat(market.outcomePrices?.[1] || 0.5),
           liquidity: parseFloat(market.liquidity || 0),
@@ -384,53 +368,34 @@ async function fetchAndStoreTrades() {
       
       await Promise.all(batch.map(async (market) => {
         try {
-          // Skip markets without token IDs
-          if (!market.token_ids || market.token_ids.length === 0) {
+          // Skip markets without conditionId
+          if (!market.condition_id) {
             failedFetches++;
             return;
           }
 
-          // Fetch trades for ALL tokens in this market (Yes and No)
+          // Fetch trades using the correct conditionId parameter
           const tenMinutesAgo = Math.floor((Date.now() - 10 * 60 * 1000) / 1000);
-          const allTrades: any[] = [];
-          const seenTransactions = new Set<string>(); // Deduplicate by transaction hash
-
-          // Query each token separately
-          for (const tokenId of market.token_ids) {
-            try {
-              const response = await fetch(
-                `https://data-api.polymarket.com/trades?asset=${tokenId}&after=${tenMinutesAgo}&limit=200`,
-                {
-                  headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'HarpoonBot/1.0'
-                  }
-                }
-              );
-
-              if (response.ok) {
-                const tradesData = await response.json();
-                const tokenTrades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
-                
-                // Deduplicate trades by transaction hash + asset
-                for (const trade of tokenTrades) {
-                  const tradeKey = `${trade.transactionHash || trade.timestamp}-${trade.asset}`;
-                  if (!seenTransactions.has(tradeKey)) {
-                    seenTransactions.add(tradeKey);
-                    allTrades.push(trade);
-                  }
-                }
-              } else {
-                failedFetches++;
+          
+          const response = await fetch(
+            `https://data-api.polymarket.com/trades?market=${market.condition_id}&after=${tenMinutesAgo}&limit=200`,
+            {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'HarpoonBot/1.0'
               }
-            } catch (e) {
-              failedFetches++;
             }
+          );
+
+          if (!response.ok) {
+            failedFetches++;
+            return;
           }
 
-          if (allTrades.length === 0) return;
-          
-          const trades = allTrades;
+          const tradesData = await response.json();
+          const trades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
+
+          if (trades.length === 0) return;
 
           // Get the latest trade timestamp we have stored to avoid duplicates
           const { data: latestStoredTrade } = await supabase
@@ -456,7 +421,7 @@ async function fetchAndStoreTrades() {
               const price = parseFloat(t.price || 0);
               
               return {
-                id: t.transactionHash ? `${t.transactionHash}-${t.asset}` : `${t.asset}-${t.timestamp}`, // Combine tx hash + asset for uniqueness
+                id: t.transactionHash || `${market.market_id}-${t.timestamp}-${t.asset}`, // Use transaction hash, fallback to unique combo
                 market_id: market.market_id,
                 event_id: market.event_id,
                 market_question: market.market_question || 'Unknown',
