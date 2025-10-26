@@ -212,8 +212,8 @@ async function fetchAndStoreSnapshot() {
     console.log(`   Processing ${trackedMarkets.length} markets in batches...`);
 
     // Process markets in batches to avoid rate limits
-    for (let i = 0; i < trackedMarkets.length; i += 20) {
-      const batch = trackedMarkets.slice(i, i + 20);
+    for (let i = 0; i < trackedMarkets.length; i += 10) {
+      const batch = trackedMarkets.slice(i, i + 10);
       
       await Promise.all(batch.map(async (market) => {
         try {
@@ -309,9 +309,9 @@ async function fetchAndStoreSnapshot() {
         }
       }));
 
-      // Small delay between batches
-      if (i + 20 < trackedMarkets.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      // Delay between batches to respect API rate limits
+      if (i + 10 < trackedMarkets.length) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
 
@@ -508,16 +508,24 @@ console.log(`   🧹 Cleanup: every ${CLEANUP_INTERVAL_MS / (1000 * 60 * 60)} ho
 console.log(`   📦 Storage: ~${SNAPSHOT_HISTORY_DAYS} days snapshots + ${TRADE_HISTORY_HOURS}h trades`);
 console.log(`   💵 Tracking markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume\n`);
 
-// Discover markets first, then start collecting
+// Discover markets first, then start collecting with staggered start times
 (async () => {
   await discoverMarkets();
-  fetchAndStoreSnapshot();
-  fetchAndStoreTrades();
   
-  // Schedule collection
-  setInterval(discoverMarkets, MARKET_REFRESH_INTERVAL_MS); // Refresh market list hourly
+  // Start snapshots immediately
+  fetchAndStoreSnapshot();
   setInterval(fetchAndStoreSnapshot, COLLECTION_INTERVAL_MS);
-  setInterval(fetchAndStoreTrades, TRADE_COLLECTION_INTERVAL_MS);
+  
+  // Delay trade collection by 2 minutes to avoid overlap with snapshots
+  console.log('⏰ Trade collection will start in 2 minutes to avoid API overlap...\n');
+  setTimeout(() => {
+    console.log('💰 Starting trade collection...\n');
+    fetchAndStoreTrades();
+    setInterval(fetchAndStoreTrades, TRADE_COLLECTION_INTERVAL_MS);
+  }, 2 * 60 * 1000); // 2 minute delay
+  
+  // Schedule other tasks
+  setInterval(discoverMarkets, MARKET_REFRESH_INTERVAL_MS); // Refresh market list hourly
   setInterval(cleanupOldData, CLEANUP_INTERVAL_MS);
   
   console.log('✅ Collector service running!\n');
