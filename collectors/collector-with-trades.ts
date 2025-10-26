@@ -35,10 +35,17 @@ const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const TRADE_HISTORY_HOURS = 48; // Keep trades for 48 hours
 const SNAPSHOT_HISTORY_DAYS = 7; // Keep snapshots for 7 days
 
+// Market discovery thresholds
+const MIN_VOLUME_THRESHOLD = 100000; // $100k minimum volume to track
+const MARKET_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // Refresh market list every hour
+
 // Thresholds for trades
 const LARGE_TRADE_THRESHOLD = 1000;  // $1k (for flagging)
 const WHALE_TRADE_THRESHOLD = 10000; // $10k (for flagging)
 const MIN_TRADE_SIZE_TO_STORE = 10000; // Only store trades >= $10k
+
+// In-memory cache of markets to track
+let trackedMarkets: Array<{ market_id: string; event_id: string; volume_24h: number }> = [];
 
 interface MarketSnapshot {
   market_id: string;
@@ -79,24 +86,75 @@ interface Trade {
 }
 
 /**
- * Fetch and store market snapshots (same as before)
+ * Discover and refresh markets from Polymarket
+ * Fetches all markets with >= $100k volume (or other criteria)
+ */
+async function discoverMarkets() {
+  console.log(`\n🔍 [${new Date().toISOString()}] Discovering markets...`);
+  try {
+    // Fetch all markets from Polymarket
+    const response = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=1000', {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'HarpoonBot/1.0'
+      }
+    });
+
+    if (!response.ok) {
+      console.error('❌ Failed to fetch markets from Polymarket');
+      return;
+    }
+
+    const marketsData = await response.json();
+    const markets = Array.isArray(marketsData) ? marketsData : (marketsData.data || []);
+
+    // Filter for markets meeting our criteria
+    const qualifyingMarkets = markets
+      .filter((m: any) => {
+        const volume = parseFloat(m.volume24hr || m.volume_24h || 0);
+        // Only track markets with >= $100k volume
+        return volume >= MIN_VOLUME_THRESHOLD;
+      })
+      .map((m: any) => ({
+        market_id: m.id || m.market_id || m.conditionId,
+        event_id: m.eventId || m.event_id || m.groupItemTitle || null,
+        volume_24h: parseFloat(m.volume24hr || m.volume_24h || 0),
+        yes_price: parseFloat(m.outcomePrices?.[0] || m.yes_price || 0),
+        no_price: parseFloat(m.outcomePrices?.[1] || m.no_price || 0),
+        liquidity: parseFloat(m.liquidity || 0),
+        status: m.active ? 'active' : 'closed'
+      }));
+
+    trackedMarkets = qualifyingMarkets;
+    console.log(`✅ Discovered ${qualifyingMarkets.length} markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume`);
+
+    return qualifyingMarkets;
+  } catch (error) {
+    console.error('❌ Error discovering markets:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetch and store market snapshots
  */
 async function fetchAndStoreSnapshot() {
   console.log(`\n📊 [${new Date().toISOString()}] Collecting market snapshots...`);
   try {
-    const { data: marketsMetadata, error: metadataError } = await supabase
-      .from('test_data')
-      .select('market_id, event_id, yes_price, no_price, volume_24h, liquidity, status');
+    // If no markets discovered yet, discovery them first
+    if (trackedMarkets.length === 0) {
+      await discoverMarkets();
+    }
 
-    if (metadataError || !marketsMetadata || marketsMetadata.length === 0) {
-      console.log('⚠️ No markets found in test_data');
+    if (trackedMarkets.length === 0) {
+      console.log('⚠️ No markets discovered yet');
       return;
     }
 
     const currentTimestamp = new Date();
     const snapshotsToInsert: MarketSnapshot[] = [];
 
-    for (const market of marketsMetadata) {
+    for (const market of trackedMarkets) {
       const latestSnapshot: MarketSnapshot = {
         market_id: market.market_id,
         event_id: market.event_id,
@@ -153,12 +211,8 @@ async function fetchAndStoreSnapshot() {
 async function fetchAndStoreTrades() {
   console.log(`\n💰 [${new Date().toISOString()}] Collecting trades...`);
   try {
-    // Get list of markets we're tracking
-    const { data: markets, error: marketsError } = await supabase
-      .from('test_data')
-      .select('market_id, event_id');
-
-    if (marketsError || !markets || markets.length === 0) {
+    // Use our discovered markets
+    if (trackedMarkets.length === 0) {
       console.log('⚠️ No markets to track trades for');
       return;
     }
@@ -168,8 +222,8 @@ async function fetchAndStoreTrades() {
     let whaleTrades = 0;
 
     // Fetch trades for each market (in batches to avoid rate limits)
-    for (let i = 0; i < markets.length; i += 10) {
-      const batch = markets.slice(i, i + 10);
+    for (let i = 0; i < trackedMarkets.length; i += 10) {
+      const batch = trackedMarkets.slice(i, i + 10);
       
       await Promise.all(batch.map(async (market) => {
         try {
@@ -312,18 +366,25 @@ async function cleanupOldData() {
 
 // Initial runs
 console.log(`🚀 Enhanced Collector Service Starting...`);
+console.log(`   🔍 Market discovery: every ${MARKET_REFRESH_INTERVAL_MS / (1000 * 60)} minutes`);
 console.log(`   📊 Market snapshots: every ${COLLECTION_INTERVAL_MS / 1000}s`);
 console.log(`   💰 Trade collection: every ${TRADE_COLLECTION_INTERVAL_MS / 1000}s`);
 console.log(`   🧹 Cleanup: every ${CLEANUP_INTERVAL_MS / (1000 * 60 * 60)} hours`);
-console.log(`   📦 Storage: ~${SNAPSHOT_HISTORY_DAYS} days snapshots + ${TRADE_HISTORY_HOURS}h trades\n`);
+console.log(`   📦 Storage: ~${SNAPSHOT_HISTORY_DAYS} days snapshots + ${TRADE_HISTORY_HOURS}h trades`);
+console.log(`   💵 Tracking markets with >= $${MIN_VOLUME_THRESHOLD.toLocaleString()} volume\n`);
 
-fetchAndStoreSnapshot();
-fetchAndStoreTrades();
-
-// Schedule collection
-setInterval(fetchAndStoreSnapshot, COLLECTION_INTERVAL_MS);
-setInterval(fetchAndStoreTrades, TRADE_COLLECTION_INTERVAL_MS);
-setInterval(cleanupOldData, CLEANUP_INTERVAL_MS);
-
-console.log('✅ Collector service running!\n');
+// Discover markets first, then start collecting
+(async () => {
+  await discoverMarkets();
+  fetchAndStoreSnapshot();
+  fetchAndStoreTrades();
+  
+  // Schedule collection
+  setInterval(discoverMarkets, MARKET_REFRESH_INTERVAL_MS); // Refresh market list hourly
+  setInterval(fetchAndStoreSnapshot, COLLECTION_INTERVAL_MS);
+  setInterval(fetchAndStoreTrades, TRADE_COLLECTION_INTERVAL_MS);
+  setInterval(cleanupOldData, CLEANUP_INTERVAL_MS);
+  
+  console.log('✅ Collector service running!\n');
+})();
 
