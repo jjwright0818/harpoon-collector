@@ -245,6 +245,12 @@ async function fetchAndStoreSnapshot() {
           // Use defaults if fetch fails
         }
 
+        // Ensure prices are never null, undefined, NaN, or 0
+        if (!yes_price || isNaN(yes_price)) yes_price = 0.5;
+        if (!no_price || isNaN(no_price)) no_price = 0.5;
+        if (!volume_24h || isNaN(volume_24h)) volume_24h = 0;
+        if (!liquidity || isNaN(liquidity)) liquidity = 0;
+
         const latestSnapshot: MarketSnapshot = {
           market_id: market.market_id,
           event_id: market.event_id,
