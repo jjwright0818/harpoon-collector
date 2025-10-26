@@ -400,7 +400,7 @@ async function fetchAndStoreTrades() {
           // Transform and filter new trades (only >= $10k)
           const newTrades: Trade[] = trades
             .filter((t: any) => {
-              const tradeTime = new Date(t.timestamp).getTime();
+              const tradeTime = new Date(t.timestamp * 1000).getTime(); // Unix timestamp is in seconds
               const size = parseFloat(t.size || t.amount || 0);
               return tradeTime > latestTimestamp && size >= MIN_TRADE_SIZE_TO_STORE;
             })
@@ -422,7 +422,7 @@ async function fetchAndStoreTrades() {
                 fee: parseFloat(t.fee || t.makerFee || 0),
                 maker_address: t.maker_address || t.maker || '',
                 taker_address: t.taker_address || t.taker || '',
-                timestamp: t.timestamp,
+                timestamp: new Date(t.timestamp * 1000).toISOString(), // Convert Unix timestamp to ISO string
                 platform: 'polymarket',
                 is_large_trade: size >= LARGE_TRADE_THRESHOLD,
                 is_whale_trade: size >= WHALE_TRADE_THRESHOLD,
