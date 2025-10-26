@@ -381,7 +381,33 @@ async function fetchAndStoreTrades() {
           }
 
           const tradesData = await response.json();
-          const trades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
+          let trades = Array.isArray(tradesData) ? tradesData : (tradesData.data || []);
+
+          // Debug: Log first trade to understand structure
+          if (trades.length > 0) {
+            console.log(`📋 Sample trade for market ${market.market_id}:`, JSON.stringify(trades[0]).substring(0, 200));
+          }
+
+          // CRITICAL: Filter to only trades for THIS market
+          // The trades API sometimes returns trades from related markets in the same event
+          const originalCount = trades.length;
+          trades = trades.filter((t: any) => {
+            // Check multiple possible fields for market identifier
+            const tradeMarket = t.market || t.market_id;
+            const tradeAssetId = t.asset_id || t.asset;
+            
+            // If trade has a market field, it must match
+            if (tradeMarket) {
+              return String(tradeMarket) === String(market.market_id);
+            }
+            
+            // Otherwise allow it through (API might not include market field)
+            return true;
+          });
+
+          if (originalCount > trades.length) {
+            console.log(`   Filtered ${originalCount - trades.length} trades that didn't match market ${market.market_id}`);
+          }
 
           if (trades.length === 0) return;
 
