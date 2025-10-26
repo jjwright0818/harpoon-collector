@@ -1,0 +1,24 @@
+{
+  "name": "harpoon-collector",
+  "version": "1.0.0",
+  "description": "Polymarket data collector for Harpoon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "collector": "npx tsx collectors/collector-with-trades.ts",
+    "start": "npx tsx collectors/collector-with-trades.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
