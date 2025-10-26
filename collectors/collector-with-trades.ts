@@ -447,7 +447,7 @@ async function fetchAndStoreTrades() {
               const price = parseFloat(t.price || 0);
               
               return {
-                id: t.transactionHash || `${t.asset}-${t.timestamp}`, // Use transaction hash for uniqueness
+                id: t.transactionHash ? `${t.transactionHash}-${t.asset}` : `${t.asset}-${t.timestamp}`, // Combine tx hash + asset for uniqueness
                 market_id: market.market_id,
                 event_id: market.event_id,
                 market_question: market.market_question || 'Unknown',
